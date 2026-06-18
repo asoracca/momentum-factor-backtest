@@ -8,7 +8,8 @@ Strategy: Jegadeesh & Titman (1993)
   - Rebalance monthly
   - Walk-forward test: train 24mo, test 6mo rolling
 
-Universe: 50 large-cap S&P 500 stocks (diversified across sectors)
+Universe: 200 S&P 500 stocks across all 11 GICS sectors
+Period:   10 years (for sufficient OOS periods and statistical power)
 
 Run:
     python momentum_backtest.py
@@ -24,23 +25,59 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
 
-# ── Universe ────────────────────────────────────────────────────────────────
+# ── Universe — 200 S&P 500 stocks across all 11 GICS sectors ────────────────
 UNIVERSE = [
-    # Tech
-    "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "AMD", "AVGO", "CRM",
-    # Finance
-    "JPM", "BAC", "GS", "MS", "V", "MA", "BLK", "AXP", "WFC", "C",
-    # Healthcare
-    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
-    # Energy
-    "XOM", "CVX", "COP", "EOG", "SLB", "PSX", "VLO", "MPC", "OXY", "HAL",
-    # Consumer / Industrials
-    "WMT", "HD", "MCD", "NKE", "SBUX", "CAT", "DE", "BA", "GE", "HON",
+    # Information Technology (30)
+    "AAPL", "MSFT", "NVDA", "AVGO", "AMD", "QCOM", "TXN", "AMAT", "LRCX", "KLAC",
+    "MU", "INTC", "ADI", "MRVL", "NXPI", "ON", "STX", "WDC", "HPQ", "KEYS",
+    "FTNT", "PANW", "CRWD", "ZS", "SNPS", "CDNS", "ANSS", "PTC", "NTAP", "FSLR",
+
+    # Communication Services (15)
+    "GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR", "EA",
+    "TTWO", "MTCH", "LYV", "IPG", "OMC",
+
+    # Consumer Discretionary (20)
+    "AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG", "MAR",
+    "HLT", "RCL", "CCL", "YUM", "DRI", "EXPE", "EBAY", "ETSY", "ROST", "ULTA",
+
+    # Consumer Staples (15)
+    "WMT", "COST", "PG", "KO", "PEP", "PM", "MO", "CL", "KMB", "GIS",
+    "CPB", "SJM", "HRL", "CAG", "MKC",
+
+    # Financials (25)
+    "JPM", "BAC", "WFC", "GS", "MS", "C", "AXP", "BLK", "SCHW", "CB",
+    "MMC", "AON", "TRV", "AFL", "MET", "PRU", "ALL", "PGR", "ICE", "CME",
+    "MCO", "SPGI", "FDS", "BR", "AMP",
+
+    # Healthcare (25)
+    "UNH", "LLY", "JNJ", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
+    "AMGN", "GILD", "ISRG", "SYK", "BSX", "MDT", "EW", "ZBH", "BAX", "BDX",
+    "IQV", "CRL", "IDXX", "MTD", "PODD",
+
+    # Industrials (20)
+    "CAT", "DE", "BA", "GE", "HON", "RTX", "LMT", "NOC", "GD", "LHX",
+    "EMR", "ITW", "PH", "ROK", "ETN", "IR", "XYL", "ROP", "CTAS", "FAST",
+
+    # Energy (15)
+    "XOM", "CVX", "COP", "EOG", "SLB", "PSX", "VLO", "MPC", "OXY", "HES",
+    "DVN", "FANG", "HAL", "BKR", "APA",
+
+    # Materials (10)
+    "LIN", "APD", "SHW", "ECL", "DD", "PPG", "NEM", "FCX", "NUE", "VMC",
+
+    # Real Estate (10)
+    "AMT", "PLD", "CCI", "EQIX", "PSA", "DLR", "O", "WELL", "SPG", "EQR",
+
+    # Utilities (10)
+    "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "PCG", "ED",
+
+    # CRM / Cloud / Software (5 extra)
+    "CRM", "NOW", "ADBE", "INTU", "ORCL",
 ]
 
 
 # ── Data ────────────────────────────────────────────────────────────────────
-def fetch_prices(period="5y"):
+def fetch_prices(period="10y"):
     """Download monthly adjusted close prices for the universe."""
     print(f"Fetching prices for {len(UNIVERSE)} stocks ({period})...")
     raw = yf.download(UNIVERSE, period=period, interval="1mo", progress=False, auto_adjust=True)
@@ -308,7 +345,7 @@ if __name__ == "__main__":
     print("  Long top 20% | Short bottom 20% | Monthly rebalance")
     print("="*55)
 
-    prices = fetch_prices(period="5y")
+    prices = fetch_prices(period="10y")
 
     # Full-sample backtest
     full_returns = run_backtest(prices)
@@ -321,6 +358,14 @@ if __name__ == "__main__":
 
     # Monte Carlo on OOS
     monte_carlo_significance(oos_returns)
+    if actual_sharpe <= 0:
+    print(f"  ❌ Negative Sharpe — strategy loses money OOS")
+elif p_val < 0.05:
+    print("  ✅ Statistically significant — edge is real (p < 0.05)")
+elif p_val < 0.10:
+    print("  ⚠️  Marginal significance (p < 0.10)")
+else:
+    print(f"  ❌ Not significant — {p_val:.0%} of random strategies match this")
 
     # Plot
     plot_results(full_returns, oos_returns)
