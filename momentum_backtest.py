@@ -281,7 +281,11 @@ def monte_carlo_significance(returns, n_sim=5000):
     print(f"  Actual Sharpe:     {actual_sharpe:.2f}")
     print(f"  Median random:     {np.median(shuffle_sharpes):.2f}")
     print(f"  p-value:           {p_val:.3f}")
-    if p_val < 0.05:
+    if actual_sharpe <= 0:
+        print(f"  ❌ Negative Sharpe — strategy LOSES money OOS")
+        print(f"     p={p_val:.3f} means {p_val:.0%} of random shuffles are even worse")
+        print(f"     This strategy is significantly bad, not significantly good")
+    elif p_val < 0.05:
         print("  ✅ Statistically significant — edge is real (p < 0.05)")
     elif p_val < 0.10:
         print("  ⚠️  Marginal significance (p < 0.10)")
@@ -358,14 +362,6 @@ if __name__ == "__main__":
 
     # Monte Carlo on OOS
     monte_carlo_significance(oos_returns)
-    if actual_sharpe <= 0:
-    print(f"  ❌ Negative Sharpe — strategy loses money OOS")
-elif p_val < 0.05:
-    print("  ✅ Statistically significant — edge is real (p < 0.05)")
-elif p_val < 0.10:
-    print("  ⚠️  Marginal significance (p < 0.10)")
-else:
-    print(f"  ❌ Not significant — {p_val:.0%} of random strategies match this")
 
     # Plot
     plot_results(full_returns, oos_returns)
