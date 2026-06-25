@@ -136,3 +136,32 @@ Output saved to `data/momentum_backtest.png`.
 ---
 
 *Built as a quant portfolio project. Not financial advice.*
+
+## Factor Analysis: Does this strategy have alpha?
+
+A positive backtest Sharpe isn't enough — the real question is whether returns
+come from **skill (alpha)** or just **exposure to known risk factors** (market,
+size, value, momentum). I tested this with a Fama-French + Momentum regression
+(`fama_french.py`):
+
+    excess_return_t = alpha + b1*(Mkt-RF) + b2*SMB + b3*HML + b4*MOM + e
+
+**Result (2,848 trading days, R-squared = 0.49):**
+
+| Term       | Coefficient | t-stat | p-value | Reading                       |
+|------------|-------------|--------|---------|-------------------------------|
+| **Alpha**  | -0.79% / yr | -0.17  | 0.865   | Indistinguishable from zero   |
+| Mkt-RF (b) | +0.26       | 15.4   | 0.000   | Small net-long market tilt    |
+| SMB (b)    | -0.02       | -0.8   | 0.438   | No size bet                   |
+| HML (b)    | -0.11       | -5.0   | 0.000   | Slight growth tilt            |
+| **MOM (b)**| **+0.84**   | **45.7** | 0.000 | Dominant momentum exposure    |
+
+**Conclusion: the strategy produces no alpha.** Its returns are almost entirely
+explained by a **0.84 loading on the momentum factor** — it is a momentum-factor
+vehicle, not an independent source of edge. This also explains the out-of-sample
+decay (Sharpe 0.21 in-sample to -0.12 OOS): with no alpha to cushion it, the
+strategy's performance simply tracks the momentum premium, which weakened over
+the test window. Separating factor beta from true alpha is the standard first
+test a quant fund applies before taking any strategy seriously.
+
+![Factor fit](data/fama_french_fit.png)
