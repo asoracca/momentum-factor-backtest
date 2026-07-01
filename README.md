@@ -165,3 +165,39 @@ the test window. Separating factor beta from true alpha is the standard first
 test a quant fund applies before taking any strategy seriously.
 
 ![Factor fit](data/fama_french_fit.png)
+
+## Statistical Arbitrage: Cointegration Pairs (with honest validation)
+
+`pairs_trading.py` implements a market-neutral pairs strategy and, more
+importantly, stress-tests it the way a quant actually should:
+
+- **Out-of-sample split:** the pair is chosen on the first 60% of data and
+  traded only on the unseen last 40%, using train-derived hedge ratio and
+  z-score statistics (no look-ahead).
+- **Multiple-testing correction:** scanning 66 pairs and keeping the best
+  p-value is data mining, so the raw cointegration p is Bonferroni-adjusted.
+- **Transaction costs:** ~10 bps per position change; net Sharpe reported.
+
+**Result (2017-2026, 12 large-cap universe):**
+
+| Check                       | Value      | Reading                                |
+|-----------------------------|------------|----------------------------------------|
+| Best pair (train)           | **V / MA** | Economically sensible (payment duopoly)|
+| Raw cointegration p         | 0.0025     | Looks strong...                        |
+| Bonferroni-adjusted p       | **0.165**  | ...fails after correcting for 66 tests |
+| In-sample Sharpe            | +0.93      | The tempting number                    |
+| **Out-of-sample Sharpe (net)** | **+0.26** | ~70% of the edge evaporates          |
+| Trades (test)               | 6          | Too few to trust                       |
+
+**Conclusion: the strategy does not survive honest validation.** The in-sample
+Sharpe of 0.93 collapses to 0.26 out-of-sample, and the cointegration is not
+significant once multiple testing is accounted for. This is the expected outcome
+for most "discovered" pairs and precisely why disciplined quants distrust raw
+backtests.
+
+**Deeper lesson:** V/MA is economically justified, so the correct approach is to
+pre-specify such pairs from domain knowledge rather than blind-scan — which
+avoids the multiple-testing penalty entirely. Blind data mining is what the
+Bonferroni column punishes.
+
+![Out-of-sample spread and equity](data/pairs_oos.png)
