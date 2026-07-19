@@ -15,64 +15,231 @@ Run:
     python momentum_backtest.py
 """
 
+from pathlib import Path
 import warnings
-warnings.filterwarnings("ignore")
 
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from pathlib import Path
+
+warnings.filterwarnings("ignore")
 
 # ── Universe — 200 S&P 500 stocks across all 11 GICS sectors ────────────────
 UNIVERSE = [
     # Information Technology (30)
-    "AAPL", "MSFT", "NVDA", "AVGO", "AMD", "QCOM", "TXN", "AMAT", "LRCX", "KLAC",
-    "MU", "INTC", "ADI", "MRVL", "NXPI", "ON", "STX", "WDC", "HPQ", "KEYS",
-    "FTNT", "PANW", "CRWD", "ZS", "SNPS", "CDNS", "ANSS", "PTC", "NTAP", "FSLR",
-
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AVGO",
+    "AMD",
+    "QCOM",
+    "TXN",
+    "AMAT",
+    "LRCX",
+    "KLAC",
+    "MU",
+    "INTC",
+    "ADI",
+    "MRVL",
+    "NXPI",
+    "ON",
+    "STX",
+    "WDC",
+    "HPQ",
+    "KEYS",
+    "FTNT",
+    "PANW",
+    "CRWD",
+    "ZS",
+    "SNPS",
+    "CDNS",
+    "ANSS",
+    "PTC",
+    "NTAP",
+    "FSLR",
     # Communication Services (15)
-    "GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR", "EA",
-    "TTWO", "MTCH", "LYV", "IPG", "OMC",
-
+    "GOOGL",
+    "META",
+    "NFLX",
+    "DIS",
+    "CMCSA",
+    "T",
+    "VZ",
+    "TMUS",
+    "CHTR",
+    "EA",
+    "TTWO",
+    "MTCH",
+    "LYV",
+    "IPG",
+    "OMC",
     # Consumer Discretionary (20)
-    "AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG", "MAR",
-    "HLT", "RCL", "CCL", "YUM", "DRI", "EXPE", "EBAY", "ETSY", "ROST", "ULTA",
-
+    "AMZN",
+    "TSLA",
+    "HD",
+    "MCD",
+    "NKE",
+    "SBUX",
+    "LOW",
+    "TJX",
+    "BKNG",
+    "MAR",
+    "HLT",
+    "RCL",
+    "CCL",
+    "YUM",
+    "DRI",
+    "EXPE",
+    "EBAY",
+    "ETSY",
+    "ROST",
+    "ULTA",
     # Consumer Staples (15)
-    "WMT", "COST", "PG", "KO", "PEP", "PM", "MO", "CL", "KMB", "GIS",
-    "CPB", "SJM", "HRL", "CAG", "MKC",
-
+    "WMT",
+    "COST",
+    "PG",
+    "KO",
+    "PEP",
+    "PM",
+    "MO",
+    "CL",
+    "KMB",
+    "GIS",
+    "CPB",
+    "SJM",
+    "HRL",
+    "CAG",
+    "MKC",
     # Financials (25)
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "AXP", "BLK", "SCHW", "CB",
-    "MMC", "AON", "TRV", "AFL", "MET", "PRU", "ALL", "PGR", "ICE", "CME",
-    "MCO", "SPGI", "FDS", "BR", "AMP",
-
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "MS",
+    "C",
+    "AXP",
+    "BLK",
+    "SCHW",
+    "CB",
+    "MMC",
+    "AON",
+    "TRV",
+    "AFL",
+    "MET",
+    "PRU",
+    "ALL",
+    "PGR",
+    "ICE",
+    "CME",
+    "MCO",
+    "SPGI",
+    "FDS",
+    "BR",
+    "AMP",
     # Healthcare (25)
-    "UNH", "LLY", "JNJ", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
-    "AMGN", "GILD", "ISRG", "SYK", "BSX", "MDT", "EW", "ZBH", "BAX", "BDX",
-    "IQV", "CRL", "IDXX", "MTD", "PODD",
-
+    "UNH",
+    "LLY",
+    "JNJ",
+    "ABBV",
+    "MRK",
+    "PFE",
+    "TMO",
+    "ABT",
+    "DHR",
+    "BMY",
+    "AMGN",
+    "GILD",
+    "ISRG",
+    "SYK",
+    "BSX",
+    "MDT",
+    "EW",
+    "ZBH",
+    "BAX",
+    "BDX",
+    "IQV",
+    "CRL",
+    "IDXX",
+    "MTD",
+    "PODD",
     # Industrials (20)
-    "CAT", "DE", "BA", "GE", "HON", "RTX", "LMT", "NOC", "GD", "LHX",
-    "EMR", "ITW", "PH", "ROK", "ETN", "IR", "XYL", "ROP", "CTAS", "FAST",
-
+    "CAT",
+    "DE",
+    "BA",
+    "GE",
+    "HON",
+    "RTX",
+    "LMT",
+    "NOC",
+    "GD",
+    "LHX",
+    "EMR",
+    "ITW",
+    "PH",
+    "ROK",
+    "ETN",
+    "IR",
+    "XYL",
+    "ROP",
+    "CTAS",
+    "FAST",
     # Energy (15)
-    "XOM", "CVX", "COP", "EOG", "SLB", "PSX", "VLO", "MPC", "OXY", "HES",
-    "DVN", "FANG", "HAL", "BKR", "APA",
-
+    "XOM",
+    "CVX",
+    "COP",
+    "EOG",
+    "SLB",
+    "PSX",
+    "VLO",
+    "MPC",
+    "OXY",
+    "HES",
+    "DVN",
+    "FANG",
+    "HAL",
+    "BKR",
+    "APA",
     # Materials (10)
-    "LIN", "APD", "SHW", "ECL", "DD", "PPG", "NEM", "FCX", "NUE", "VMC",
-
+    "LIN",
+    "APD",
+    "SHW",
+    "ECL",
+    "DD",
+    "PPG",
+    "NEM",
+    "FCX",
+    "NUE",
+    "VMC",
     # Real Estate (10)
-    "AMT", "PLD", "CCI", "EQIX", "PSA", "DLR", "O", "WELL", "SPG", "EQR",
-
+    "AMT",
+    "PLD",
+    "CCI",
+    "EQIX",
+    "PSA",
+    "DLR",
+    "O",
+    "WELL",
+    "SPG",
+    "EQR",
     # Utilities (10)
-    "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "PCG", "ED",
-
+    "NEE",
+    "DUK",
+    "SO",
+    "D",
+    "AEP",
+    "EXC",
+    "SRE",
+    "XEL",
+    "PCG",
+    "ED",
     # CRM / Cloud / Software (5 extra)
-    "CRM", "NOW", "ADBE", "INTU", "ORCL",
+    "CRM",
+    "NOW",
+    "ADBE",
+    "INTU",
+    "ORCL",
 ]
 
 
@@ -80,7 +247,9 @@ UNIVERSE = [
 def fetch_prices(period="10y"):
     """Download monthly adjusted close prices for the universe."""
     print(f"Fetching prices for {len(UNIVERSE)} stocks ({period})...")
-    raw = yf.download(UNIVERSE, period=period, interval="1mo", progress=False, auto_adjust=True)
+    raw = yf.download(
+        UNIVERSE, period=period, interval="1mo", progress=False, auto_adjust=True
+    )
 
     # Flatten MultiIndex
     if isinstance(raw.columns, pd.MultiIndex):
@@ -110,9 +279,9 @@ def compute_momentum_signal(prices, formation_months=12, skip_months=1):
     Returns DataFrame of momentum scores (same shape as prices).
     """
     # Total return over formation window, skip most recent month
-    lagged    = prices.shift(skip_months)           # price 1 month ago
-    past_price = prices.shift(formation_months)     # price 12 months ago
-    momentum  = (lagged - past_price) / past_price  # % return 12-1 months ago
+    lagged = prices.shift(skip_months)  # price 1 month ago
+    past_price = prices.shift(formation_months)  # price 12 months ago
+    momentum = (lagged - past_price) / past_price  # % return 12-1 months ago
     return momentum
 
 
@@ -134,18 +303,18 @@ def run_backtest(prices, top_pct=0.20, bottom_pct=0.20):
         if len(scores) < 10:
             continue
 
-        n_top    = max(1, int(len(scores) * top_pct))
+        n_top = max(1, int(len(scores) * top_pct))
         n_bottom = max(1, int(len(scores) * bottom_pct))
 
         winners = scores.nlargest(n_top).index.tolist()
-        losers  = scores.nsmallest(n_bottom).index.tolist()
+        losers = scores.nsmallest(n_bottom).index.tolist()
 
         # Next month returns (forward-looking, correct: signal at t, returns at t+1)
         next_ret = monthly_returns.iloc[i + 1]
 
-        long_ret  = next_ret[winners].mean()
+        long_ret = next_ret[winners].mean()
         short_ret = next_ret[losers].mean()
-        port_ret  = long_ret - short_ret  # long-short portfolio
+        port_ret = long_ret - short_ret  # long-short portfolio
 
         portfolio_returns.append(port_ret)
         dates.append(prices.index[i + 1])
@@ -161,23 +330,23 @@ def compute_stats(returns, label="Momentum"):
         return {}
 
     ann_return = returns.mean() * 12
-    ann_vol    = returns.std() * np.sqrt(12)
-    sharpe     = ann_return / ann_vol if ann_vol > 0 else 0
+    ann_vol = returns.std() * np.sqrt(12)
+    sharpe = ann_return / ann_vol if ann_vol > 0 else 0
 
-    downside   = returns[returns < 0].std() * np.sqrt(12)
-    sortino    = ann_return / downside if downside > 0 else 0
+    downside = returns[returns < 0].std() * np.sqrt(12)
+    sortino = ann_return / downside if downside > 0 else 0
 
     cumulative = (1 + returns).cumprod()
     rolling_max = cumulative.cummax()
-    drawdowns  = (cumulative - rolling_max) / rolling_max
-    max_dd     = drawdowns.min()
+    drawdowns = (cumulative - rolling_max) / rolling_max
+    max_dd = drawdowns.min()
 
-    win_rate   = (returns > 0).mean()
-    total_ret  = (1 + returns).prod() - 1
+    win_rate = (returns > 0).mean()
+    total_ret = (1 + returns).prod() - 1
 
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"  {label}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"  Months of data:       {len(returns)}")
     print(f"  Win rate:             {win_rate:.1%}")
     print(f"  Annualized return:    {ann_return:.1%}")
@@ -186,7 +355,7 @@ def compute_stats(returns, label="Momentum"):
     print(f"  Sortino ratio:        {sortino:.2f}")
     print(f"  Max drawdown:         {max_dd:.1%}")
     print(f"  Total return:         {total_ret:.1%}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
 
     if sharpe >= 0.5:
         print("  ✅ Solid edge — strategy has positive risk-adj return")
@@ -206,7 +375,9 @@ def compute_stats(returns, label="Momentum"):
 
 
 # ── Walk-forward ─────────────────────────────────────────────────────────────
-def walk_forward_test(prices, train_months=24, test_months=6, top_pct=0.20, bottom_pct=0.20):
+def walk_forward_test(
+    prices, train_months=24, test_months=6, top_pct=0.20, bottom_pct=0.20
+):
     """
     Rolling walk-forward: train on 24 months, test on next 6, shift by 6, repeat.
     Only out-of-sample (test) returns are kept.
@@ -222,26 +393,26 @@ def walk_forward_test(prices, train_months=24, test_months=6, top_pct=0.20, bott
 
     while start + train_months + test_months <= n:
         train_end = start + train_months
-        test_end  = train_end + test_months
+        test_end = train_end + test_months
 
         test_returns = []
-        test_dates   = []
+        test_dates = []
 
         for i in range(train_end, test_end - 1):
             scores = momentum.iloc[i].dropna()
             if len(scores) < 10:
                 continue
 
-            n_top    = max(1, int(len(scores) * top_pct))
+            n_top = max(1, int(len(scores) * top_pct))
             n_bottom = max(1, int(len(scores) * bottom_pct))
 
             winners = scores.nlargest(n_top).index.tolist()
-            losers  = scores.nsmallest(n_bottom).index.tolist()
+            losers = scores.nsmallest(n_bottom).index.tolist()
 
-            next_ret  = monthly_returns.iloc[i + 1]
-            long_ret  = next_ret[winners].mean()
+            next_ret = monthly_returns.iloc[i + 1]
+            long_ret = next_ret[winners].mean()
             short_ret = next_ret[losers].mean()
-            port_ret  = long_ret - short_ret
+            port_ret = long_ret - short_ret
 
             test_returns.append(port_ret)
             test_dates.append(prices.index[i + 1])
@@ -252,12 +423,14 @@ def walk_forward_test(prices, train_months=24, test_months=6, top_pct=0.20, bott
             all_oos_returns.extend(test_returns)
 
             w = (period_series > 0).sum()
-            print(f"  OOS Period {period}: {len(period_series)} months | "
-                  f"win {w/len(period_series):.0%} | "
-                  f"return {period_series.mean()*12:.1%} ann")
+            print(
+                f"  OOS Period {period}: {len(period_series)} months | "
+                f"win {w / len(period_series):.0%} | "
+                f"return {period_series.mean() * 12:.1%} ann"
+            )
 
         period += 1
-        start  += test_months  # roll forward
+        start += test_months  # roll forward
 
     return pd.Series(all_oos_returns, name="oos_returns")
 
@@ -282,9 +455,9 @@ def monte_carlo_significance(returns, n_sim=5000):
     print(f"  Median random:     {np.median(shuffle_sharpes):.2f}")
     print(f"  p-value:           {p_val:.3f}")
     if actual_sharpe <= 0:
-        print(f"  ❌ Negative Sharpe — strategy LOSES money OOS")
+        print("  ❌ Negative Sharpe — strategy LOSES money OOS")
         print(f"     p={p_val:.3f} means {p_val:.0%} of random shuffles are even worse")
-        print(f"     This strategy is significantly bad, not significantly good")
+        print("     This strategy is significantly bad, not significantly good")
     elif p_val < 0.05:
         print("  ✅ Statistically significant — edge is real (p < 0.05)")
     elif p_val < 0.10:
@@ -297,17 +470,31 @@ def monte_carlo_significance(returns, n_sim=5000):
 def plot_results(full_returns, oos_returns):
     """3-panel chart: cumulative return, monthly returns, drawdown."""
     fig, axes = plt.subplots(3, 1, figsize=(13, 11), sharex=False)
-    fig.suptitle("Momentum Factor Backtest — L/S Cross-Sectional Momentum",
-                 fontsize=14, fontweight="bold")
+    fig.suptitle(
+        "Momentum Factor Backtest — L/S Cross-Sectional Momentum",
+        fontsize=14,
+        fontweight="bold",
+    )
 
     # Panel 1: Cumulative returns
     cum_full = (1 + full_returns).cumprod()
-    cum_oos  = (1 + oos_returns).cumprod()
+    cum_oos = (1 + oos_returns).cumprod()
 
-    axes[0].plot(cum_full.index, cum_full.values, color="#1D9E75", linewidth=1.8,
-                 label="Full sample")
-    axes[0].plot(oos_oos := oos_returns.index, cum_oos.values,
-                 color="#A32D2D", linewidth=1.8, linestyle="--", label="OOS only")
+    axes[0].plot(
+        cum_full.index,
+        cum_full.values,
+        color="#1D9E75",
+        linewidth=1.8,
+        label="Full sample",
+    )
+    axes[0].plot(
+        oos_returns.index,
+        cum_oos.values,
+        color="#A32D2D",
+        linewidth=1.8,
+        linestyle="--",
+        label="OOS only",
+    )
     axes[0].axhline(1, color="black", linewidth=0.8, alpha=0.4)
     axes[0].set_ylabel("Growth of $1")
     axes[0].set_title("Cumulative Return")
@@ -316,7 +503,9 @@ def plot_results(full_returns, oos_returns):
 
     # Panel 2: Monthly returns bar
     colors = ["#1D9E75" if r >= 0 else "#A32D2D" for r in full_returns]
-    axes[1].bar(full_returns.index, full_returns.values, color=colors, alpha=0.7, width=20)
+    axes[1].bar(
+        full_returns.index, full_returns.values, color=colors, alpha=0.7, width=20
+    )
     axes[1].axhline(0, color="black", linewidth=0.8)
     axes[1].set_ylabel("Monthly Return")
     axes[1].set_title("Monthly P&L")
@@ -324,7 +513,7 @@ def plot_results(full_returns, oos_returns):
 
     # Panel 3: Drawdown
     cum = (1 + full_returns).cumprod()
-    dd  = (cum - cum.cummax()) / cum.cummax()
+    dd = (cum - cum.cummax()) / cum.cummax()
     axes[2].fill_between(dd.index, dd.values, 0, color="#A32D2D", alpha=0.4)
     axes[2].set_ylabel("Drawdown")
     axes[2].set_title("Underwater Curve (Drawdown from Peak)")
@@ -343,11 +532,11 @@ def plot_results(full_returns, oos_returns):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n" + "="*55)
+    print("\n" + "=" * 55)
     print("  MOMENTUM FACTOR BACKTEST")
     print("  Strategy: Jegadeesh & Titman (1993)")
     print("  Long top 20% | Short bottom 20% | Monthly rebalance")
-    print("="*55)
+    print("=" * 55)
 
     prices = fetch_prices(period="10y")
 
