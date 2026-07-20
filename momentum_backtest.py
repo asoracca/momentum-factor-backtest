@@ -6,7 +6,10 @@ Strategy: Jegadeesh & Titman (1993)
   - Rank stocks by 12-1 month return (last 12 months, skip most recent month)
   - Long top 20% (winners), short bottom 20% (losers)
   - Rebalance monthly
-  - Walk-forward test: train 24mo, test 6mo rolling
+  - Chronological 60% development / 40% untouched evaluation split
+  - Long-only and equal-weight alternatives
+  - Turnover-based transaction costs and cost sensitivity
+  - Centered circular-block bootstrap significance test
 
 Universe: 200 S&P 500 stocks across all 11 GICS sectors
 Period:   10 years (for sufficient OOS periods and statistical power)
@@ -15,14 +18,13 @@ Run:
     python momentum_backtest.py
 """
 
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
@@ -246,6 +248,8 @@ UNIVERSE = [
 # ── Data ────────────────────────────────────────────────────────────────────
 def fetch_prices(period="10y"):
     """Download monthly adjusted close prices for the universe."""
+    import yfinance as yf
+
     print(f"Fetching prices for {len(UNIVERSE)} stocks ({period})...")
     raw = yf.download(
         UNIVERSE, period=period, interval="1mo", progress=False, auto_adjust=True
@@ -286,40 +290,72 @@ def compute_momentum_signal(prices, formation_months=12, skip_months=1):
 
 
 # ── Backtest ────────────────────────────────────────────────────────────────
-def run_backtest(prices, top_pct=0.20, bottom_pct=0.20):
+def run_backtest(
+    prices,
+    top_pct=0.20,
+    bottom_pct=0.20,
+    mode="long_short",
+    transaction_cost_bps=10.0,
+    return_details=False,
+):
     """
     Monthly rebalance: long top quintile, short bottom quintile.
     Equal-weight within each leg.
-    Returns a Series of monthly portfolio returns.
+    ``mode`` may be ``long_short``, ``long_only``, or ``equal_weight``.
+    Costs are charged on one-way turnover. Returns are net of costs by default.
     """
     momentum = compute_momentum_signal(prices)
     monthly_returns = prices.pct_change()
 
-    portfolio_returns = []
+    rows = []
     dates = []
+    previous_weights = pd.Series(dtype=float)
 
-    for i in range(13, len(prices) - 1):
+    for i in range(12, len(prices) - 1):
         scores = momentum.iloc[i].dropna()
         if len(scores) < 10:
             continue
 
         n_top = max(1, int(len(scores) * top_pct))
-        n_bottom = max(1, int(len(scores) * bottom_pct))
-
         winners = scores.nlargest(n_top).index.tolist()
-        losers = scores.nsmallest(n_bottom).index.tolist()
+        weights = pd.Series(0.0, index=scores.index)
+        if mode == "long_short":
+            n_bottom = max(1, int(len(scores) * bottom_pct))
+            losers = scores.nsmallest(n_bottom).index.tolist()
+            weights.loc[winners] = 1.0 / len(winners)
+            weights.loc[losers] = -1.0 / len(losers)
+        elif mode == "long_only":
+            weights.loc[winners] = 1.0 / len(winners)
+        elif mode == "equal_weight":
+            weights.loc[:] = 1.0 / len(weights)
+        else:
+            raise ValueError("mode must be long_short, long_only, or equal_weight")
 
         # Next month returns (forward-looking, correct: signal at t, returns at t+1)
         next_ret = monthly_returns.iloc[i + 1]
 
-        long_ret = next_ret[winners].mean()
-        short_ret = next_ret[losers].mean()
-        port_ret = long_ret - short_ret  # long-short portfolio
-
-        portfolio_returns.append(port_ret)
+        all_assets = weights.index.union(previous_weights.index)
+        current_aligned = weights.reindex(all_assets, fill_value=0.0)
+        previous_aligned = previous_weights.reindex(all_assets, fill_value=0.0)
+        turnover = (current_aligned - previous_aligned).abs().sum()
+        gross_return = (weights * next_ret.reindex(weights.index).fillna(0.0)).sum()
+        cost = turnover * transaction_cost_bps / 10_000
+        rows.append(
+            {
+                "gross_return": gross_return,
+                "turnover": turnover,
+                "cost": cost,
+                "net_return": gross_return - cost,
+            }
+        )
         dates.append(prices.index[i + 1])
+        previous_weights = weights
 
-    return pd.Series(portfolio_returns, index=dates, name="momentum_returns")
+    details = pd.DataFrame(rows, index=dates)
+    details.index.name = "date"
+    if return_details:
+        return details
+    return details["net_return"].rename(f"{mode}_returns")
 
 
 # ── Stats ────────────────────────────────────────────────────────────────────
@@ -357,12 +393,7 @@ def compute_stats(returns, label="Momentum"):
     print(f"  Total return:         {total_ret:.1%}")
     print(f"{'=' * 55}")
 
-    if sharpe >= 0.5:
-        print("  ✅ Solid edge — strategy has positive risk-adj return")
-    elif sharpe >= 0.2:
-        print("  ⚠️  Weak edge — works but barely")
-    else:
-        print("  ❌ No edge detected in this period")
+    print("  Descriptive metrics only; use the holdout bootstrap for inference.")
 
     return {
         "ann_return": ann_return,
@@ -372,98 +403,6 @@ def compute_stats(returns, label="Momentum"):
         "max_dd": max_dd,
         "win_rate": win_rate,
     }
-
-
-# ── Walk-forward ─────────────────────────────────────────────────────────────
-def walk_forward_test(
-    prices, train_months=24, test_months=6, top_pct=0.20, bottom_pct=0.20
-):
-    """
-    Rolling walk-forward: train on 24 months, test on next 6, shift by 6, repeat.
-    Only out-of-sample (test) returns are kept.
-    """
-    momentum = compute_momentum_signal(prices)
-    monthly_returns = prices.pct_change()
-
-    all_oos_returns = []
-    n = len(prices)
-
-    period = 0
-    start = 13  # need 12 months for signal to warm up
-
-    while start + train_months + test_months <= n:
-        train_end = start + train_months
-        test_end = train_end + test_months
-
-        test_returns = []
-        test_dates = []
-
-        for i in range(train_end, test_end - 1):
-            scores = momentum.iloc[i].dropna()
-            if len(scores) < 10:
-                continue
-
-            n_top = max(1, int(len(scores) * top_pct))
-            n_bottom = max(1, int(len(scores) * bottom_pct))
-
-            winners = scores.nlargest(n_top).index.tolist()
-            losers = scores.nsmallest(n_bottom).index.tolist()
-
-            next_ret = monthly_returns.iloc[i + 1]
-            long_ret = next_ret[winners].mean()
-            short_ret = next_ret[losers].mean()
-            port_ret = long_ret - short_ret
-
-            test_returns.append(port_ret)
-            test_dates.append(prices.index[i + 1])
-
-        if test_returns:
-            period_series = pd.Series(test_returns, index=test_dates)
-            period_series.name = f"Period_{period}"
-            all_oos_returns.extend(test_returns)
-
-            w = (period_series > 0).sum()
-            print(
-                f"  OOS Period {period}: {len(period_series)} months | "
-                f"win {w / len(period_series):.0%} | "
-                f"return {period_series.mean() * 12:.1%} ann"
-            )
-
-        period += 1
-        start += test_months  # roll forward
-
-    return pd.Series(all_oos_returns, name="oos_returns")
-
-
-# ── Monte Carlo ──────────────────────────────────────────────────────────────
-def monte_carlo_significance(returns, n_sim=5000):
-    """Shuffle monthly returns 5000x. What % of random Sharpes beat yours?"""
-    if len(returns) < 6:
-        return
-
-    actual_sharpe = returns.mean() / returns.std() * np.sqrt(12)
-    shuffle_sharpes = []
-
-    for _ in range(n_sim):
-        shuffled = returns.sample(frac=1).values
-        s = shuffled.mean() / shuffled.std() * np.sqrt(12) if shuffled.std() > 0 else 0
-        shuffle_sharpes.append(s)
-
-    p_val = (np.array(shuffle_sharpes) >= actual_sharpe).mean()
-    print(f"\n── Monte Carlo ({n_sim:,} simulations) ──────────────────")
-    print(f"  Actual Sharpe:     {actual_sharpe:.2f}")
-    print(f"  Median random:     {np.median(shuffle_sharpes):.2f}")
-    print(f"  p-value:           {p_val:.3f}")
-    if actual_sharpe <= 0:
-        print("  ❌ Negative Sharpe — strategy LOSES money OOS")
-        print(f"     p={p_val:.3f} means {p_val:.0%} of random shuffles are even worse")
-        print("     This strategy is significantly bad, not significantly good")
-    elif p_val < 0.05:
-        print("  ✅ Statistically significant — edge is real (p < 0.05)")
-    elif p_val < 0.10:
-        print("  ⚠️  Marginal significance (p < 0.10)")
-    else:
-        print(f"  ❌ Not significant — {p_val:.0%} of random strategies match this")
 
 
 # ── Plot ─────────────────────────────────────────────────────────────────────
@@ -532,6 +471,13 @@ def plot_results(full_returns, oos_returns):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    from research import (
+        block_bootstrap_significance,
+        chronological_split,
+        cost_sensitivity,
+        format_bootstrap,
+    )
+
     print("\n" + "=" * 55)
     print("  MOMENTUM FACTOR BACKTEST")
     print("  Strategy: Jegadeesh & Titman (1993)")
@@ -541,16 +487,40 @@ if __name__ == "__main__":
     prices = fetch_prices(period="10y")
 
     # Full-sample backtest
-    full_returns = run_backtest(prices)
-    compute_stats(full_returns, label="FULL SAMPLE BACKTEST")
+    full_details = run_backtest(prices, return_details=True)
+    development, evaluation = chronological_split(full_details)
+    full_returns = full_details["net_return"]
+    oos_returns = evaluation["net_return"]
+    compute_stats(full_returns, label="FULL SAMPLE, NET OF 10 BPS COSTS")
+    compute_stats(oos_returns, label="UNTOUCHED 40% EVALUATION PERIOD")
 
-    # Walk-forward OOS
-    print("\n── Walk-Forward OOS (train 24mo → test 6mo) ──────────")
-    oos_returns = walk_forward_test(prices, train_months=24, test_months=6)
-    compute_stats(oos_returns, label="WALK-FORWARD OOS RESULTS")
+    print("\n── Untouched evaluation and simple alternatives ──────────")
+    long_only = run_backtest(prices, mode="long_only")
+    equal_weight = run_backtest(prices, mode="equal_weight")
+    _, long_only_oos = chronological_split(long_only.to_frame("net_return"))
+    _, equal_weight_oos = chronological_split(equal_weight.to_frame("net_return"))
+    compute_stats(long_only_oos["net_return"], label="LONG-ONLY MOMENTUM OOS")
+    compute_stats(equal_weight_oos["net_return"], label="EQUAL-WEIGHT OOS")
 
-    # Monte Carlo on OOS
-    monte_carlo_significance(oos_returns)
+    # Statistical test and cost sensitivity on the untouched period.
+    bootstrap = block_bootstrap_significance(oos_returns)
+    print("\nCENTERED BLOCK BOOTSTRAP")
+    print(format_bootstrap(bootstrap))
+    sensitivity = cost_sensitivity(prices, run_backtest)
+    print("\nTRANSACTION-COST SENSITIVITY")
+    print(sensitivity.round(3))
+
+    Path("data").mkdir(exist_ok=True)
+    full_details.to_csv("data/momentum_returns.csv")
+    pd.concat(
+        [
+            oos_returns.rename("long_short"),
+            long_only_oos["net_return"].rename("long_only"),
+            equal_weight_oos["net_return"].rename("equal_weight"),
+        ],
+        axis=1,
+    ).to_csv("data/oos_comparison.csv")
+    sensitivity.to_csv("data/cost_sensitivity.csv")
 
     # Plot
     plot_results(full_returns, oos_returns)

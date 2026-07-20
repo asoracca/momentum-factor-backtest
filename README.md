@@ -1,203 +1,123 @@
-# momentum-factor-backtest
+# Momentum Factor Research
 
-Cross-sectional momentum factor backtest — replicating Jegadeesh & Titman (1993) on a 200-stock S&P 500 universe with walk-forward out-of-sample validation and Monte Carlo significance testing.
+A reproducible study of cross-sectional equity momentum, factor exposure, and
+cointegration pairs. The emphasis is honest evaluation: next-period execution,
+an untouched chronological test period, transaction costs, simple benchmarks,
+and conclusions that match the statistical evidence.
 
----
+## Main research question
 
-## Research Question
+Does a fixed 12-1 momentum rule add value in a recent large-cap US equity
+sample after costs and against simple alternatives?
 
-Does the momentum factor — buying past winners and shorting past losers — still generate alpha in the post-2012 market?
+The study does **not** claim to reproduce the original Jegadeesh and Titman
+sample. It applies the same broad signal idea to a hand-selected, current-stock
+universe with materially different data and implementation assumptions.
 
-The 1993 Jegadeesh & Titman paper is one of the most cited in finance. They found that stocks returning the most over the past 12 months (skipping the most recent month) tend to keep outperforming. This project tests whether that edge persists today using a rigorous walk-forward methodology.
+## Momentum experiment
 
-**Short answer: It doesn't.** Full-sample Sharpe of 0.21 matches published literature. Out-of-sample Sharpe of -0.12 matches the documented post-2012 decay from factor crowding and passive investing dominance.
+`momentum_backtest.py`:
 
----
+- computes return from month `t-12` through `t-1`;
+- ranks stocks using information available at month `t`;
+- holds the selected portfolio during month `t+1`;
+- evaluates long-short, long-only, and equal-weight portfolios;
+- charges turnover-based costs at 0, 5, 10, and 25 basis points;
+- reserves the final 40% of observations as one chronological evaluation set;
+- tests positive mean return using a centered circular-block bootstrap.
 
-## Strategy
+The first 60% is called the **development period**, not training data. The rule
+has no fitted parameters, so calling this a rolling training exercise would be
+misleading.
 
-- **Signal**: 12-1 month return — total return over past 12 months, skipping the most recent month (avoids short-term reversal)
-- **Long**: Top 20% by momentum score (winners)
-- **Short**: Bottom 20% by momentum score (losers)
-- **Rebalance**: Monthly
-- **Universe**: 200 S&P 500 stocks across all 11 GICS sectors
+### Why the bootstrap changed
 
-The skip-month avoids the well-documented 1-month reversal effect — stocks that just had a big month tend to give back gains short-term, which would contaminate a pure momentum signal.
+An earlier version shuffled the same monthly returns and recalculated Sharpe.
+That is invalid because permutation preserves the sample mean and volatility,
+so it cannot create a meaningful Sharpe null distribution.
 
----
-
-## Methodology
-
-### Walk-Forward Out-of-Sample Test
-
-The strategy is evaluated using a proper walk-forward framework, not a simple in-sample backtest:
-
-```
-Train: 24 months → Test: next 6 months → Shift 6 months → Repeat
-```
-
-This produces 13 independent out-of-sample test periods. Only the test-period returns are used to evaluate performance — the strategy never sees future data during training.
-
-**Why this matters**: An in-sample backtest on the full dataset is almost always optimistic. The walk-forward test shows what you would have actually made in real-time.
-
-### Monte Carlo Significance
-
-After the walk-forward test, monthly returns are shuffled 5,000 times. The Sharpe ratio of each shuffle is computed. The p-value is the fraction of shuffled Sharpes that beat the real Sharpe.
-
-This tests whether the strategy has genuine skill or just got lucky. For negative Sharpe (OOS), a low p-value means the strategy is significantly *bad* — it consistently underperforms random.
-
----
-
-## Results
-
-```
-Full Sample (10 years)
-  Annualized return:    2.4%
-  Sharpe ratio:         0.21     ← matches published literature
-  Sortino ratio:        0.30
-  Max drawdown:        -27.8%
-  Win rate:             52%
-
-Walk-Forward OOS (13 periods × 6 months)
-  Annualized return:   -1.5%
-  Sharpe ratio:        -0.12    ← loses money OOS
-  Max drawdown:        -18.4%
-  Win rate:             48%
-```
-
-The divergence between in-sample (0.21) and OOS (-0.12) is the story. It confirms the post-publication decay documented in academic literature: once momentum is widely known, factor crowding compresses the premium and liquidity events cause momentum crashes.
-
----
-
-## Why Momentum Has Decayed
-
-The strategy worked cleanly pre-2012. Post-2012, three things happened:
-
-1. **Factor crowding**: Quant funds all run momentum. When everyone buys the same winners, the premium gets arbed away.
-2. **Passive investing**: Index rebalancing creates mechanical buying/selling that works against momentum at reconstitution.
-3. **Momentum crashes**: During fast reversals (2009, 2020), momentum funds need to deleverage simultaneously — causing sharp losses exactly when you're most exposed.
-
-The OOS result is not a failure of the backtest. It is the correct result. The in-sample Sharpe of 0.21 matches Jegadeesh & Titman's original. The OOS decay matches every paper written on momentum after 2015.
-
----
-
-## Files
-
-```
-momentum-factor-backtest/
-├── momentum_backtest.py    ← full backtest (run this)
-├── requirements.txt
-└── README.md
-```
-
----
+The current test centers returns to impose a zero-mean null, then resamples
+short circular blocks. This retains some local dependence while asking whether
+the observed positive Sharpe is unusually large under a zero-return null.
 
 ## Run
 
 ```bash
 git clone https://github.com/asoracca/momentum-factor-backtest.git
 cd momentum-factor-backtest
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+python -m pytest -q
 python momentum_backtest.py
 ```
 
-Runtime: ~3-4 minutes (data download + 13 OOS periods + Monte Carlo).
+The main script writes the current return series, benchmark comparison, cost
+sensitivity table, and chart under `data/`.
 
-Output saved to `data/momentum_backtest.png`.
+## Interpreting results
 
----
+Use the untouched-period numbers as the headline result. Full-sample metrics
+are descriptive and should not be presented as independent validation.
 
-## Concepts Used
+A positive return or Sharpe is not automatically an edge. The stronger claim
+requires all of the following:
 
-- **Cross-sectional momentum** (Jegadeesh & Titman 1993): rank stocks by past return, long top quintile, short bottom quintile
-- **Walk-forward validation**: proper train/test split to avoid look-ahead bias
-- **Monte Carlo significance**: shuffle P&L 5,000 times, compute p-value on Sharpe ratio
-- **Sortino ratio**: like Sharpe but only penalizes downside volatility (ignores upside vol, which isn't risk)
-- **Max drawdown**: largest peak-to-trough loss — the number that actually keeps you up at night
+1. positive performance in the untouched period;
+2. resilience to reasonable costs;
+3. improvement over long-only and equal-weight alternatives;
+4. a small block-bootstrap p-value;
+5. enough observations to make the estimate stable.
 
----
+If these checks fail, the appropriate conclusion is **insufficient evidence of
+an implementable premium in this sample**. It is not proof that momentum never
+works, and it does not identify the economic cause of weak performance.
 
-## Limitations
+## Other studies
 
-- **Long-only versions work better**: The short leg is hard to execute (borrow costs, uptick rule). A long-only momentum ETF (MTUM) would be a fairer benchmark.
-- **Survivorship bias**: Universe built from current S&P 500 members. Stocks that got delisted mid-period are excluded, which biases results positively.
-- **Transaction costs ignored**: Monthly rebalancing across 200 stocks incurs real friction — bid/ask spread, market impact, commissions.
-- **Factor timing not modeled**: Momentum performs better in trending markets, worse in choppy/reverting markets. A regime filter could improve OOS performance.
+### Factor regression
 
----
+`fama_french.py` estimates market, size, value, and momentum exposure. Its
+historical demo found a large momentum loading and an alpha estimate that was
+not statistically distinguishable from zero. Failing to reject zero alpha is
+not the same as proving alpha is exactly zero.
 
-## Planned Upgrades
+When `data/strategy_returns.csv` is absent, this script constructs a separate
+daily demo portfolio. Its result must not be described as a regression of the
+main 200-stock monthly experiment.
 
-- Fama-French 3-factor regression: decompose returns into market, size, value exposure — isolate pure momentum alpha
-- Regime filter: run momentum only when market trend is strong (e.g., SPY > 200-day MA)
-- Volatility scaling: size positions inversely to each stock's realized vol (improves Sharpe)
-- Long-only variant: compare against MTUM ETF as benchmark
+### Cointegration pairs
 
----
+`pairs_trading.py` selects a pair on the first 60% of observations and evaluates
+it on the final 40%, using train-derived spread parameters, a Bonferroni
+multiple-testing adjustment, and transaction costs. The saved V/MA snapshot had
+few out-of-sample trades and did not survive the adjusted significance check,
+so it is an example of a hypothesis that remained inconclusive.
 
-*Built as a quant portfolio project. Not financial advice.*
+## Important limitations
 
-## Factor Analysis: Does this strategy have alpha?
+- The universe uses current constituents and therefore has survivorship and
+  selection bias.
+- Yahoo Finance data is convenient research data, not institutional-quality
+  point-in-time data.
+- Forward-filling and incomplete histories can distort eligibility.
+- The long-short test does not model borrow availability or stock-specific
+  borrow fees.
+- Monthly adjusted-close returns simplify execution and market impact.
+- One chronological holdout is honest but noisy; it does not establish that a
+  result generalizes across every regime.
+- Repeatedly modifying the strategy after viewing the holdout would make that
+  period part of development data.
 
-A positive backtest Sharpe isn't enough — the real question is whether returns
-come from **skill (alpha)** or just **exposure to known risk factors** (market,
-size, value, momentum). I tested this with a Fama-French + Momentum regression
-(`fama_french.py`):
+## Repository structure
 
-    excess_return_t = alpha + b1*(Mkt-RF) + b2*SMB + b3*HML + b4*MOM + e
+```text
+momentum_backtest.py  momentum construction, costs, alternatives, and plots
+research.py           chronological split, bootstrap, and cost sensitivity
+fama_french.py        separate factor-regression study
+pairs_trading.py      separate cointegration study
+tests/                deterministic, network-free methodology tests
+```
 
-**Result (2,848 trading days, R-squared = 0.49):**
-
-| Term       | Coefficient | t-stat | p-value | Reading                       |
-|------------|-------------|--------|---------|-------------------------------|
-| **Alpha**  | -0.79% / yr | -0.17  | 0.865   | Indistinguishable from zero   |
-| Mkt-RF (b) | +0.26       | 15.4   | 0.000   | Small net-long market tilt    |
-| SMB (b)    | -0.02       | -0.8   | 0.438   | No size bet                   |
-| HML (b)    | -0.11       | -5.0   | 0.000   | Slight growth tilt            |
-| **MOM (b)**| **+0.84**   | **45.7** | 0.000 | Dominant momentum exposure    |
-
-**Conclusion: the strategy produces no alpha.** Its returns are almost entirely
-explained by a **0.84 loading on the momentum factor** — it is a momentum-factor
-vehicle, not an independent source of edge. This also explains the out-of-sample
-decay (Sharpe 0.21 in-sample to -0.12 OOS): with no alpha to cushion it, the
-strategy's performance simply tracks the momentum premium, which weakened over
-the test window. Separating factor beta from true alpha is the standard first
-test a quant fund applies before taking any strategy seriously.
-
-![Factor fit](data/fama_french_fit.png)
-
-## Statistical Arbitrage: Cointegration Pairs (with honest validation)
-
-`pairs_trading.py` implements a market-neutral pairs strategy and, more
-importantly, stress-tests it the way a quant actually should:
-
-- **Out-of-sample split:** the pair is chosen on the first 60% of data and
-  traded only on the unseen last 40%, using train-derived hedge ratio and
-  z-score statistics (no look-ahead).
-- **Multiple-testing correction:** scanning 66 pairs and keeping the best
-  p-value is data mining, so the raw cointegration p is Bonferroni-adjusted.
-- **Transaction costs:** ~10 bps per position change; net Sharpe reported.
-
-**Result (2017-2026, 12 large-cap universe):**
-
-| Check                       | Value      | Reading                                |
-|-----------------------------|------------|----------------------------------------|
-| Best pair (train)           | **V / MA** | Economically sensible (payment duopoly)|
-| Raw cointegration p         | 0.0025     | Looks strong...                        |
-| Bonferroni-adjusted p       | **0.165**  | ...fails after correcting for 66 tests |
-| In-sample Sharpe            | +0.93      | The tempting number                    |
-| **Out-of-sample Sharpe (net)** | **+0.26** | ~70% of the edge evaporates          |
-| Trades (test)               | 6          | Too few to trust                       |
-
-**Conclusion: the strategy does not survive honest validation.** The in-sample
-Sharpe of 0.93 collapses to 0.26 out-of-sample, and the cointegration is not
-significant once multiple testing is accounted for. This is the expected outcome
-for most "discovered" pairs and precisely why disciplined quants distrust raw
-backtests.
-
-**Deeper lesson:** V/MA is economically justified, so the correct approach is to
-pre-specify such pairs from domain knowledge rather than blind-scan — which
-avoids the multiple-testing penalty entirely. Blind data mining is what the
-Bonferroni column punishes.
-
-![Out-of-sample spread and equity](data/pairs_oos.png)
+Educational research only; not financial advice.
