@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.format]
+line-ending = "cr-lf"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
