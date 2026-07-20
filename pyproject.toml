@@ -11,3 +11,6 @@ line-ending = "cr-lf"
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
+[tool.ruff.lint.per-file-ignores]
+"fama_french.py" = ["I001"]
+"pairs_trading.py" = ["I001"]
