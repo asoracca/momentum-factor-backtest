@@ -105,3 +105,64 @@ def format_bootstrap(result):
         f"One-sided p-value: {result['p_value']:.3f}\n"
         f"{conclusion}"
     )
+
+
+def evaluate_portfolios(portfolios, config):
+    """Fixed calendar evaluation; no inference across missing calendar returns.
+
+    Block bootstrap tests are exploratory sensitivity analyses, not independent
+    chances to select a significant result. Primary specification: L/S, 10 bps,
+    block 3, one-sided zero-mean null. All other rows are descriptive.
+    """
+    rows = []
+    for mode, portfolio in portfolios.items():
+        details = portfolio.details.loc[config.evaluation_start :]
+        if details.empty:
+            raise ValueError("evaluation period has no return observations")
+        for bps in config.costs:
+            returns = details.gross_return - details.turnover * bps / 10000
+            for block in config.blocks:
+                row = dict(
+                    mode=mode,
+                    bps=bps,
+                    block=block,
+                    months=len(returns),
+                    observed_months=int(returns.notna().sum()),
+                    mean_turnover=float(details.turnover.mean()),
+                    annual_mean=None,
+                    ci_low=None,
+                    ci_high=None,
+                    p_value=None,
+                    status="incomplete_coverage",
+                )
+                if returns.notna().all():
+                    row["annual_mean"] = float(12 * returns.mean())
+                    if len(returns) >= max(6, 2 * block) and returns.std() > 1e-12:
+                        result = block_bootstrap_significance(
+                            returns, config.simulations, block, config.seed
+                        )
+                        row["p_value"] = result["p_value"]
+                        # Uncentered circular blocks give a percentile interval for the mean.
+                        rng = np.random.default_rng(config.seed)
+                        samples = []
+                        values = returns.to_numpy()
+                        for _ in range(config.simulations):
+                            starts = rng.integers(
+                                0, len(values), size=int(np.ceil(len(values) / block))
+                            )
+                            indices = (
+                                (starts[:, None] + np.arange(block)) % len(values)
+                            ).ravel()[: len(values)]
+                            samples.append(values[indices].mean() * 12)
+                        row["ci_low"], row["ci_high"] = map(
+                            float, np.quantile(samples, [0.025, 0.975])
+                        )
+                        row["status"] = (
+                            "exploratory"
+                            if config.holdout_status != "untouched_declared"
+                            else "declared_holdout"
+                        )
+                    else:
+                        row["status"] = "insufficient_sample_or_variation"
+                rows.append(row)
+    return pd.DataFrame(rows)
