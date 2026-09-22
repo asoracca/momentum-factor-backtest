@@ -18,15 +18,12 @@ Run:
     python momentum_backtest.py
 """
 
-import warnings
 from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-warnings.filterwarnings("ignore")
 
 # ── Universe — 200 S&P 500 stocks across all 11 GICS sectors ────────────────
 UNIVERSE = [
@@ -266,10 +263,6 @@ def fetch_prices(period="10y"):
     prices.index = pd.to_datetime(prices.index).tz_localize(None)
     prices = prices.dropna(how="all")
 
-    # Drop any ticker that has >20% missing data
-    keep = prices.columns[prices.isna().mean() < 0.2]
-    prices = prices[keep].ffill()
-
     print(f"  Got {len(prices)} months × {len(prices.columns)} stocks")
     return prices
 
@@ -304,55 +297,15 @@ def run_backtest(
     ``mode`` may be ``long_short``, ``long_only``, or ``equal_weight``.
     Costs are charged on one-way turnover. Returns are net of costs by default.
     """
-    momentum = compute_momentum_signal(prices)
-    monthly_returns = prices.pct_change()
+    from pipeline import build_portfolio
 
-    rows = []
-    dates = []
-    previous_weights = pd.Series(dtype=float)
-
-    for i in range(12, len(prices) - 1):
-        scores = momentum.iloc[i].dropna()
-        if len(scores) < 10:
-            continue
-
-        n_top = max(1, int(len(scores) * top_pct))
-        winners = scores.nlargest(n_top).index.tolist()
-        weights = pd.Series(0.0, index=scores.index)
-        if mode == "long_short":
-            n_bottom = max(1, int(len(scores) * bottom_pct))
-            losers = scores.nsmallest(n_bottom).index.tolist()
-            weights.loc[winners] = 1.0 / len(winners)
-            weights.loc[losers] = -1.0 / len(losers)
-        elif mode == "long_only":
-            weights.loc[winners] = 1.0 / len(winners)
-        elif mode == "equal_weight":
-            weights.loc[:] = 1.0 / len(weights)
-        else:
-            raise ValueError("mode must be long_short, long_only, or equal_weight")
-
-        # Next month returns (forward-looking, correct: signal at t, returns at t+1)
-        next_ret = monthly_returns.iloc[i + 1]
-
-        all_assets = weights.index.union(previous_weights.index)
-        current_aligned = weights.reindex(all_assets, fill_value=0.0)
-        previous_aligned = previous_weights.reindex(all_assets, fill_value=0.0)
-        turnover = (current_aligned - previous_aligned).abs().sum()
-        gross_return = (weights * next_ret.reindex(weights.index).fillna(0.0)).sum()
-        cost = turnover * transaction_cost_bps / 10_000
-        rows.append(
-            {
-                "gross_return": gross_return,
-                "turnover": turnover,
-                "cost": cost,
-                "net_return": gross_return - cost,
-            }
-        )
-        dates.append(prices.index[i + 1])
-        previous_weights = weights
-
-    details = pd.DataFrame(rows, index=dates)
-    details.index.name = "date"
+    *_, details, missing, asset_returns = build_portfolio(
+        prices,
+        mode=mode,
+        top_pct=top_pct,
+        bottom_pct=bottom_pct,
+        cost_bps=transaction_cost_bps,
+    )
     if return_details:
         return details
     return details["net_return"].rename(f"{mode}_returns")
@@ -471,58 +424,6 @@ def plot_results(full_returns, oos_returns):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from research import (
-        block_bootstrap_significance,
-        chronological_split,
-        cost_sensitivity,
-        format_bootstrap,
-    )
+    from experiment import main
 
-    print("\n" + "=" * 55)
-    print("  MOMENTUM FACTOR BACKTEST")
-    print("  Strategy: Jegadeesh & Titman (1993)")
-    print("  Long top 20% | Short bottom 20% | Monthly rebalance")
-    print("=" * 55)
-
-    prices = fetch_prices(period="10y")
-
-    # Full-sample backtest
-    full_details = run_backtest(prices, return_details=True)
-    development, evaluation = chronological_split(full_details)
-    full_returns = full_details["net_return"]
-    oos_returns = evaluation["net_return"]
-    compute_stats(full_returns, label="FULL SAMPLE, NET OF 10 BPS COSTS")
-    compute_stats(oos_returns, label="UNTOUCHED 40% EVALUATION PERIOD")
-
-    print("\n── Untouched evaluation and simple alternatives ──────────")
-    long_only = run_backtest(prices, mode="long_only")
-    equal_weight = run_backtest(prices, mode="equal_weight")
-    _, long_only_oos = chronological_split(long_only.to_frame("net_return"))
-    _, equal_weight_oos = chronological_split(equal_weight.to_frame("net_return"))
-    compute_stats(long_only_oos["net_return"], label="LONG-ONLY MOMENTUM OOS")
-    compute_stats(equal_weight_oos["net_return"], label="EQUAL-WEIGHT OOS")
-
-    # Statistical test and cost sensitivity on the untouched period.
-    bootstrap = block_bootstrap_significance(oos_returns)
-    print("\nCENTERED BLOCK BOOTSTRAP")
-    print(format_bootstrap(bootstrap))
-    sensitivity = cost_sensitivity(prices, run_backtest)
-    print("\nTRANSACTION-COST SENSITIVITY")
-    print(sensitivity.round(3))
-
-    Path("data").mkdir(exist_ok=True)
-    full_details.to_csv("data/momentum_returns.csv")
-    pd.concat(
-        [
-            oos_returns.rename("long_short"),
-            long_only_oos["net_return"].rename("long_only"),
-            equal_weight_oos["net_return"].rename("equal_weight"),
-        ],
-        axis=1,
-    ).to_csv("data/oos_comparison.csv")
-    sensitivity.to_csv("data/cost_sensitivity.csv")
-
-    # Plot
-    plot_results(full_returns, oos_returns)
-
-    print("\nDone. Check data/momentum_backtest.png for charts.")
+    main()

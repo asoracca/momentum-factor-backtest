@@ -6,18 +6,22 @@ exposure to known risk factors and tests for leftover ALPHA.
 
     excess_ret_t = alpha + b_mkt*(Mkt-RF) + b_smb*SMB + b_hml*HML + b_mom*MOM + e
 
-  Significant POSITIVE alpha -> real edge. Alpha ~ 0 with big betas -> just factors.
+  Inference is conditional on this sample and model; nonrejection is not equality.
 
     python fama_french.py
 """
 
-import os
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 
 def to_dates(idx):
@@ -74,7 +78,7 @@ def demo_strategy_returns(start="2015-01-01"):
         "Close"
     ].dropna(how="all")
     px.index = to_dates(px.index)
-    rets = px.pct_change()
+    rets = px.pct_change(fill_method=None)
     mom = px.shift(21) / px.shift(252) - 1.0
     out = {}
     for d in rets.index:
@@ -91,86 +95,106 @@ def demo_strategy_returns(start="2015-01-01"):
     return s.dropna()
 
 
-def load_strategy_returns():
-    path = "data/strategy_returns.csv"
-    if os.path.exists(path):
-        df = pd.read_csv(path)
-        c = df.columns
-        s = df.set_index(c[0])[c[1]].astype(float)
-        s.index = to_dates(s.index)
-        print(f"Loaded strategy returns from {path} ({len(s)} days).")
-        return s
-    print(
-        "No data/strategy_returns.csv — building a demo momentum long/short portfolio."
+def read_artifact(path, expected_frequency=None):
+    path = Path(path)
+    metadata = json.loads(path.with_suffix(".json").read_text())
+    if metadata.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise ValueError(f"artifact hash mismatch: {path}")
+    frequency = metadata.get("frequency")
+    if frequency not in {"monthly", "daily"} or (
+        expected_frequency and frequency != expected_frequency
+    ):
+        raise ValueError("artifact frequency mismatch")
+    frame = pd.read_csv(path, index_col=0, parse_dates=True)
+    if frame.index.has_duplicates or not frame.index.is_monotonic_increasing:
+        raise ValueError("artifact dates must be unique and ordered")
+    if frequency == "monthly":
+        if frame.index.to_period("M").has_duplicates:
+            raise ValueError("multiple observations in a monthly artifact")
+        frame.index = frame.index.to_period("M").to_timestamp("M")
+    return frame, metadata
+
+
+def fit_artifacts(return_path, factor_path, start=None):
+    strategy, metadata = read_artifact(return_path)
+    factors, factor_meta = read_artifact(factor_path, metadata["frequency"])
+    if factor_meta.get("units") != "decimal":
+        raise ValueError("factor units must explicitly be decimal, not percent")
+    if not factor_meta.get("source"):
+        raise ValueError("factor source metadata is required")
+    strategy = strategy.loc[start:] if start else strategy
+    column = metadata["return_column"]
+    required = ["Mkt-RF", "SMB", "HML", "MOM", "RF"]
+    if not set(required).issubset(factors.columns):
+        raise ValueError("missing required factor columns")
+    if not strategy.index.isin(factors.index).all():
+        raise ValueError(
+            "factor date coverage does not match the selected return artifact"
+        )
+    factors = factors.loc[strategy.index, required]
+    if (
+        len(strategy) < 12
+        or not np.isfinite(strategy[column]).all()
+        or not np.isfinite(factors).all().all()
+    ):
+        raise ValueError(
+            "need at least 12 finite aligned returns; missing values are not silently dropped"
+        )
+    if metadata["frequency"] == "monthly" and len(
+        pd.period_range(strategy.index.min(), strategy.index.max(), freq="M")
+    ) != len(strategy):
+        raise ValueError("monthly return artifact has calendar gaps")
+    kind = metadata.get("return_kind")
+    if kind not in {"zero_investment", "total", "excess"}:
+        raise ValueError("return_kind must specify total, excess, or zero_investment")
+    y = strategy[column] - factors["RF"] if kind == "total" else strategy[column]
+    X = sm.add_constant(factors[required[:-1]], has_constant="add")
+    if np.linalg.matrix_rank(X.to_numpy()) != X.shape[1]:
+        raise ValueError("factor design is rank deficient")
+    lags = 3 if metadata["frequency"] == "monthly" else 5
+    model = sm.OLS(y, X, missing="raise").fit(
+        cov_type="HAC", cov_kwds={"maxlags": lags}
     )
-    return demo_strategy_returns()
+    interval = model.conf_int().loc["const"].tolist()
+    result = dict(
+        return_artifact=str(return_path),
+        return_sha256=metadata["sha256"],
+        factor_artifact=str(factor_path),
+        factor_sha256=factor_meta["sha256"],
+        factor_source=factor_meta["source"],
+        frequency=metadata["frequency"],
+        return_kind=kind,
+        n=int(model.nobs),
+        start=str(strategy.index.min().date()),
+        end=str(strategy.index.max().date()),
+        alpha=float(model.params["const"]),
+        alpha_ci95=interval,
+        p_value=float(model.pvalues["const"]),
+        hac_lags=lags,
+        betas=model.params.drop("const").to_dict(),
+        interpretation="Conditional estimate; nonsignificance does not establish zero alpha or absence of skill; repeated model searches require multiple-testing control.",
+    )
+    return result
 
 
 def run():
-    strat = load_strategy_returns()
-    ff = load_factors(start=str(strat.index.min().date()))
-    df = pd.concat([strat.rename("ret"), ff], axis=1, join="inner").dropna()
-    print(
-        f"  strategy days: {len(strat)} | factor days: {len(ff)} | overlapping: {len(df)}"
+    parser = argparse.ArgumentParser(
+        description="Explicit return-artifact factor regression; no fallback"
     )
-    if len(df) < 60:
-        print("Still not enough overlap — paste this line and I'll fix it.")
-        return
-
-    y = df["ret"] - df["RF"]
-    X = sm.add_constant(df[["Mkt-RF", "SMB", "HML", "MOM"]])
-    model = sm.OLS(y, X).fit()
-
-    a_d = model.params["const"]
-    a_ann = (1 + a_d) ** 252 - 1
-    print("=" * 60)
-    print("  FAMA-FRENCH (+MOM) FACTOR REGRESSION")
-    print("=" * 60)
-    print(f"  Observations: {int(model.nobs)} days")
-    print(f"  R-squared:    {model.rsquared:.3f}")
-    print("-" * 60)
-    print(
-        f"  Alpha (daily):      {a_d * 100:+.4f}%   t = {model.tvalues['const']:+.2f}   p = {model.pvalues['const']:.3f}"
+    parser.add_argument("--returns", required=True)
+    parser.add_argument(
+        "--factors",
+        required=True,
+        help="CSV with date,Mkt-RF,SMB,HML,MOM,RF and JSON metadata",
     )
-    print(f"  Alpha (annualized): {a_ann * 100:+.2f}%")
-    print("-" * 60)
-    print("  Factor exposures (beta):")
-    for f in ["Mkt-RF", "SMB", "HML", "MOM"]:
-        print(
-            f"    {f:8s} beta = {model.params[f]:+.3f}   t = {model.tvalues[f]:+.2f}   p = {model.pvalues[f]:.3f}"
-        )
-    print("=" * 60)
-    if model.pvalues["const"] < 0.05 and a_d > 0:
-        print("  Significant POSITIVE alpha — real edge beyond the factors.")
-    elif model.pvalues["const"] < 0.05 and a_d < 0:
-        print("  Significant NEGATIVE alpha — underperforms its factor exposure.")
-    else:
-        print(
-            "  Alpha not distinguishable from zero — returns are factor exposure, not skill."
-        )
-    dom = max(["Mkt-RF", "SMB", "HML", "MOM"], key=lambda f: abs(model.params[f]))
-    print(f"  Biggest tilt: {dom} (beta {model.params[dom]:+.2f}).")
-    print("=" * 60)
-
-    pred = model.predict(X)
-    plt.figure(figsize=(10, 5))
-    plt.plot(
-        (1 + y).cumprod().index, (1 + y).cumprod(), label="Strategy (excess)", lw=2
-    )
-    plt.plot(
-        (1 + pred).cumprod().index,
-        (1 + pred).cumprod(),
-        label="Factor-predicted",
-        lw=1.5,
-        ls="--",
-    )
-    plt.title("Strategy vs Fama-French Factor Model")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    os.makedirs("data", exist_ok=True)
-    plt.savefig("data/fama_french_fit.png", dpi=110)
-    print("  Saved chart: data/fama_french_fit.png")
+    parser.add_argument("--start", help="Optional fixed evaluation start")
+    parser.add_argument("--output", default="outputs/factor_regression.json")
+    args = parser.parse_args()
+    result = fit_artifacts(args.returns, args.factors, args.start)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
